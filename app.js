@@ -1,5 +1,3 @@
-// app_ui.js — UI polished: card sections, RACI pills (words), real checklist, smarter search, fit-to-selection
-
 const HOTSPOTS = [
   {
     "id": "P0.01",
@@ -1790,385 +1788,360 @@ const STEPS = {
   }
 };
 
-
-function getPhase(id) {
-  const m = String(id||"").match(/^([PS]\d+)/);
-  return m ? m[1] : "UNK";
-}
-
-function escapeHtml(s) {
+function escapeHtml(s){
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 }
-
-function linesToUl(text) {
+function linesToUl(text){
   const t = String(text ?? "").trim();
   if (!t) return '<div class="muted">—</div>';
   const items = t.split(/\n+/).map(x=>x.trim()).filter(Boolean);
   return '<ul class="list">' + items.map(i=>'<li>'+escapeHtml(i)+'</li>').join('') + '</ul>';
 }
-
-function normalizePoints(points) {
+function normalizePoints(points){
   if (!Array.isArray(points) || points.length < 3) return [];
   let cx=0, cy=0;
-  for (let i=0;i<points.length;i++) { cx += points[i][0]; cy += points[i][1]; }
+  for (let i=0;i<points.length;i++){ cx += points[i][0]; cy += points[i][1]; }
   cx /= points.length; cy /= points.length;
   return points.slice().sort((a,b)=>
     Math.atan2(a[1]-cy,a[0]-cx) - Math.atan2(b[1]-cy,b[0]-cx)
   );
 }
-
-const PHASE_STYLE = {
-  P0:  { fill: "rgba(255,230,0,0.18)" },
-  P1:  { fill: "rgba(0,200,255,0.18)" },
-  P2:  { fill: "rgba(120,255,0,0.18)" },
-  P3:  { fill: "rgba(255,140,0,0.18)" },
-  P4:  { fill: "rgba(190,120,255,0.18)" },
-  P5:  { fill: "rgba(255,0,140,0.18)" },
-  P6:  { fill: "rgba(0,255,170,0.18)" },
-  P7:  { fill: "rgba(160,160,160,0.18)" },
-  S1:  { fill: "rgba(255,80,80,0.20)" },
-  UNK: { fill: "rgba(200,200,200,0.18)" }
-};
-
-const RACILABEL = {
-  R: "Исполнитель",
-  A: "Ответственный",
-  C: "Консультирует",
-  I: "Информируется"
-};
-
-function raciToWords(val) {
+const RACILABEL={R:"Исполнитель",A:"Ответственный",C:"Консультирует",I:"Информируется"};
+function raciToWords(val){
   const s = String(val||"").toUpperCase();
   const parts = s.split(/[^RACI]+/).filter(Boolean);
   if (!parts.length) return "";
   const uniq = [...new Set(parts)];
   return uniq.map(x => RACILABEL[x] || x).join(" / ");
 }
+let selectedId=null;
+let polyById=new Map();
+let showPane=null;
 
-function injectStyles() {
-  if (document.getElementById("uiStyle")) return;
-  const css = `
-    .panelCard{border:1px solid #eee;border-radius:16px;padding:14px;box-shadow:0 4px 18px rgba(0,0,0,.06);}
-    .hTitle{font-size:18px;font-weight:800;margin:0;}
-    .hSub{color:#666;font-size:12px;margin-top:6px;display:flex;gap:8px;flex-wrap:wrap}
-    .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #eaeaea;border-radius:999px;font-size:12px;background:#fafafa}
-    .muted{color:#999;font-size:13px}
-    .section{margin-top:12px;border:1px solid #eee;border-radius:14px;overflow:hidden}
-    .section summary{list-style:none;cursor:pointer;padding:10px 12px;font-weight:700;background:#fbfbfb;display:flex;justify-content:space-between;align-items:center}
-    .section summary::-webkit-details-marker{display:none}
-    .section .content{padding:10px 12px;background:#fff;border-top:1px solid #eee}
-    .list{margin:6px 0 0 18px}
-    .pillRow{display:flex;flex-wrap:wrap;gap:8px}
-    .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #eee;border-radius:999px;background:#fff}
-    .pill .k{font-weight:800}
-    .pill .v{color:#444;font-size:13px}
-    .checkItem{display:flex;gap:10px;align-items:flex-start;padding:6px 0}
-    .checkItem input{margin-top:3px}
-    .btnSmall{padding:6px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer}
-    .btnSmall:hover{background:#f3f3f3}
-    .searchEmpty{color:#999;font-size:13px;margin-top:8px}
-  `;
-  const style = document.createElement("style");
-  style.id = "uiStyle";
-  style.textContent = css;
-  document.head.appendChild(style);
+function isMobile(){
+  return window.matchMedia && window.matchMedia("(max-width: 980px)").matches;
 }
 
-let selectedId = null;
-let polyById = new Map();
+function initMobileTabs(){
+  const tabs = document.getElementById("mobileTabs");
+  if (!tabs) return;
 
-function initPanel(panel) {
-  injectStyles();
+  const nav = document.querySelector(".nav");
+  const center = document.querySelector(".center");
+  const right = document.querySelector(".right");
+
+  const bStages = document.getElementById("tabStages");
+  const bDiagram = document.getElementById("tabDiagram");
+  const bDetails = document.getElementById("tabDetails");
+
+  function setActive(btn){
+    [bStages,bDiagram,bDetails].forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+  }
+
+  function show(which){
+    nav && nav.classList.remove("mobileOn");
+    center && center.classList.remove("mobileOn");
+    right && right.classList.remove("mobileOn");
+
+    if (which === "stages") { nav && nav.classList.add("mobileOn"); setActive(bStages); }
+    if (which === "diagram") { center && center.classList.add("mobileOn"); setActive(bDiagram); }
+    if (which === "details") { right && right.classList.add("mobileOn"); setActive(bDetails); }
+  }
+
+  bStages.onclick = ()=>show("stages");
+  bDiagram.onclick = ()=>show("diagram");
+  bDetails.onclick = ()=>show("details");
+
+  show("diagram");
+  showPane = show;
+}
+
+function initPanel(panel){
   panel.innerHTML =
-    '<div style="display:flex;gap:8px;align-items:center;">' +
-      '<input id="stepSearch" placeholder="Поиск: P3.04 или слово..." ' +
-        'style="flex:1;padding:8px 10px;border:1px solid #ddd;border-radius:10px;outline:none;">' +
-      '<button id="clearSearch" class="btnSmall">×</button>' +
-    '</div>' +
-    '<div id="searchResults" style="margin-top:10px;"></div>' +
-    '<hr style="margin:12px 0;border:none;border-top:1px solid #eee;">' +
-    '<div id="stepDetails"><div class="panelCard"><h2 class="hTitle">Выбери блок</h2><div class="muted">Кликни по блоку слева — справа откроются детали.</div></div></div>';
+    '<div style="display:flex;gap:8px;align-items:center;">'+
+      '<input id="stepSearch" placeholder="Поиск: P3.04 или слово..." '+
+        'style="flex:1;padding:10px 12px;border:1px solid rgba(0,0,0,0.08);border-radius:12px;outline:none;background:rgba(255,255,255,0.78);backdrop-filter: blur(10px);">'+
+      '<button id="clearSearch" class="btnSmall">×</button>'+
+    '</div>'+
+    '<div id="searchResults" style="margin-top:10px;"></div>'+
+    '<hr style="margin:12px 0;border:none;border-top:1px solid rgba(0,0,0,0.06);">'+
+    '<div id="stepDetails"><div class="panelCard"><h2 class="hTitle">Выбери шаг</h2><div class="muted">Кликни по блоку на диаграмме.</div></div></div>';
 }
+function checklistKey(id){return "check:"+id;}
+function loadChecks(id){try{return JSON.parse(localStorage.getItem(checklistKey(id))||"[]");}catch{return[];}}
+function saveChecks(id,arr){try{localStorage.setItem(checklistKey(id),JSON.stringify(arr));}catch{}}
 
-function checklistKey(id){ return "check:" + id; }
+function renderStep(panel,id){
+  const s=STEPS[id]||{};
+  const raciEntries=s.raci?Object.entries(s.raci):[];
+  const rolePairs=raciEntries.filter(([k,_])=>!/срок|час/i.test(k));
+  const kv=raciEntries.filter(([k,_])=>/срок|час/i.test(k));
 
-function loadChecks(id){
-  try { return JSON.parse(localStorage.getItem(checklistKey(id)) || "[]"); } catch { return []; }
-}
-function saveChecks(id, arr){
-  try { localStorage.setItem(checklistKey(id), JSON.stringify(arr)); } catch {}
-}
-
-function renderStep(panel, id) {
-  const s = STEPS[id] || {};
-  const phase = getPhase(id);
-
-  const raciEntries = s.raci ? Object.entries(s.raci) : [];
-  const raciHtml = raciEntries.length
-    ? '<div class="pillRow">' + raciEntries.map(([role,val]) => {
-        const words = raciToWords(val);
-        return '<div class="pill"><span class="k">'+escapeHtml(role)+'</span><span class="v">'+escapeHtml(words || val)+'</span></div>';
-      }).join('') + '</div>'
+  const raciHtml=rolePairs.length
+    ? '<div class="pillRow">'+rolePairs.map(([role,val])=>{const words=raciToWords(val);return '<div class="pill"><span class="k">'+escapeHtml(role)+'</span><span class="v">'+escapeHtml(words||val)+'</span></div>';}).join('')+'</div>'
     : '<div class="muted">Нет данных</div>';
+  const metricsHtml=kv.length
+    ? '<div class="pillRow" style="margin-top:10px;">'+kv.map(([k,v])=>'<div class="pill"><span class="k">'+escapeHtml(k)+'</span><span class="v">'+escapeHtml(v)+'</span></div>').join('')+'</div>'
+    : '';
 
-  const checklist = Array.isArray(s.checklist) ? s.checklist : [];
-  const saved = loadChecks(id);
-  const checklistHtml = checklist.length ? (
-      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:6px;">' +
-        '<button id="resetChecks" class="btnSmall">Сбросить</button>' +
-      '</div>' +
-      checklist.map((it, i) => {
-        const checked = saved.includes(i) ? "checked" : "";
-        return '<label class="checkItem"><input type="checkbox" data-ck="'+i+'" '+checked+'><span>'+escapeHtml(it)+'</span></label>';
-      }).join('')
+  const checklist=Array.isArray(s.checklist)?s.checklist:[];
+  const saved=loadChecks(id);
+  const checklistHtml=checklist.length ? (
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:6px;">'+
+        '<button id="resetChecks" class="btnSmall">Сбросить</button>'+
+      '</div>'+
+      checklist.map((it,i)=>{const checked=saved.includes(i)?"checked":"";return '<label class="checkItem"><input type="checkbox" data-ck="'+i+'" '+checked+'><span>'+escapeHtml(it)+'</span></label>';}).join('')
     ) : '<div class="muted">Нет чек-листа</div>';
 
   panel.querySelector("#stepDetails").innerHTML = `
     <div class="panelCard">
-      <h1 class="hTitle">${escapeHtml(id)} — ${escapeHtml(s.title || "")}</h1>
+      <h1 class="hTitle">${escapeHtml(id)} — ${escapeHtml(s.title||"")}</h1>
       <div class="hSub">
-        <span class="badge">Фаза: <b>${escapeHtml(phase)}</b></span>
-        <span class="badge">Этап матрицы: <b>${escapeHtml(s.matrix_stage || "—")}</b></span>
+        <span class="badge">Этап матрицы: <b>${escapeHtml(s.matrix_stage||"—")}</b></span>
       </div>
 
-      <details class="section" open>
-        <summary>Вход в этап <span>▾</span></summary>
-        <div class="content">${linesToUl(s.inputs)}</div>
-      </details>
-
-      <details class="section" open>
-        <summary>Выход из этапа <span>▾</span></summary>
-        <div class="content">${linesToUl(s.outputs)}</div>
-      </details>
-
-      <details class="section">
-        <summary>Кто кому может ставить задачу <span>▾</span></summary>
-        <div class="content">${escapeHtml(s.assign || "—")}</div>
-      </details>
-
-      <details class="section" open>
-        <summary>RACI <span>▾</span></summary>
-        <div class="content">${raciHtml}</div>
-      </details>
-
-      <details class="section" open>
-        <summary>Чек-лист <span>▾</span></summary>
-        <div class="content">${checklistHtml}</div>
-      </details>
-
-      <details class="section">
-        <summary>Уведомить при завершении <span>▾</span></summary>
-        <div class="content">${escapeHtml(s.notify || "—")}</div>
-      </details>
+      <details class="section" open><summary>Вход в этап <span>▾</span></summary><div class="content">${linesToUl(s.inputs)}</div></details>
+      <details class="section" open><summary>Выход из этапа <span>▾</span></summary><div class="content">${linesToUl(s.outputs)}</div></details>
+      <details class="section"><summary>Кто кому может ставить задачу <span>▾</span></summary><div class="content">${escapeHtml(s.assign||"—")}</div></details>
+      <details class="section" open><summary>RACI <span>▾</span></summary><div class="content">${raciHtml}${metricsHtml}</div></details>
+      <details class="section" open><summary>Чек-лист <span>▾</span></summary><div class="content">${checklistHtml}</div></details>
+      <details class="section"><summary>Уведомить при завершении <span>▾</span></summary><div class="content">${escapeHtml(s.notify||"—")}</div></details>
     </div>
   `;
 
-  // hook checklist persistence
-  const resetBtn = panel.querySelector("#resetChecks");
-  if (resetBtn) {
-    resetBtn.onclick = () => {
-      saveChecks(id, []);
-      renderStep(panel, id);
-    };
-  }
-  panel.querySelectorAll('input[type="checkbox"][data-ck]').forEach(cb => {
-    cb.addEventListener("change", () => {
-      const idx = parseInt(cb.getAttribute("data-ck"), 10);
-      const now = new Set(loadChecks(id));
-      if (cb.checked) now.add(idx);
-      else now.delete(idx);
-      saveChecks(id, [...now].sort((a,b)=>a-b));
+  const resetBtn=panel.querySelector("#resetChecks");
+  if(resetBtn) resetBtn.onclick=()=>{saveChecks(id,[]);renderStep(panel,id);};
+  panel.querySelectorAll('input[type="checkbox"][data-ck]').forEach(cb=>{
+    cb.addEventListener("change",()=>{
+      const idx=parseInt(cb.getAttribute("data-ck"),10);
+      const now=new Set(loadChecks(id));
+      cb.checked?now.add(idx):now.delete(idx);
+      saveChecks(id,[...now].sort((a,b)=>a-b));
     });
   });
 }
 
-function searchSteps(q) {
-  q = (q || '').trim().toLowerCase();
-  if (!q) return [];
-  const out = [];
-  for (const id in STEPS) {
-    const s = STEPS[id] || {};
-    const hay = (id + ' ' + (s.title||'') + ' ' + (s.matrix_stage||'')).toLowerCase();
-    let score = 0;
-    if (id.toLowerCase() === q) score += 1000;
-    if (id.toLowerCase().startsWith(q)) score += 600;
-    if (hay.includes(q)) score += 120;
-    if (score>0) out.push({id, title: s.title||id, matrix: s.matrix_stage||'', score});
+function searchSteps(q){
+  q=(q||"").trim().toLowerCase();
+  if(!q) return [];
+  const out=[];
+  for(const id in STEPS){
+    const s=STEPS[id]||{};
+    const hay=(id+' '+(s.title||'')+' '+(s.matrix_stage||'')).toLowerCase();
+    let score=0;
+    if(id.toLowerCase()===q) score+=1000;
+    if(id.toLowerCase().startsWith(q)) score+=600;
+    if(hay.includes(q)) score+=120;
+    if(score>0) out.push({id,title:s.title||id,matrix:s.matrix_stage||'',score});
   }
   out.sort((a,b)=>b.score-a.score);
-  return out.slice(0, 10);
+  return out.slice(0,10);
 }
-
-function renderSearch(panel, results, query) {
-  const box = panel.querySelector("#searchResults");
-  const q = (query || "").trim();
-  if (!q) { box.innerHTML = ""; return; } // ✅ no "nothing found" when empty
-  if (!results.length) {
-    box.innerHTML = '<div class="searchEmpty">Ничего не найдено</div>';
-    return;
-  }
-  box.innerHTML = results.map(r =>
-    '<div data-id="'+escapeHtml(r.id)+'" style="padding:8px 10px;border:1px solid #eee;border-radius:10px;margin-bottom:6px;cursor:pointer;">' +
-      '<div style="font-weight:800;">'+escapeHtml(r.id)+'</div>' +
-      '<div style="color:#666;font-size:13px;">'+escapeHtml(r.title)+'</div>' +
-      (r.matrix ? '<div style="color:#999;font-size:12px;margin-top:3px;">'+escapeHtml(r.matrix)+'</div>' : '') +
+function renderSearch(panel,results,query){
+  const box=panel.querySelector("#searchResults");
+  const q=(query||"").trim();
+  if(!q){box.innerHTML="";return;}
+  if(!results.length){box.innerHTML='<div class="searchEmpty">Ничего не найдено</div>';return;}
+  box.innerHTML=results.map(r=>
+    '<div data-id="'+escapeHtml(r.id)+'" style="padding:10px 12px;border:1px solid rgba(0,0,0,0.06);border-radius:14px;margin-bottom:8px;cursor:pointer;background:rgba(255,255,255,0.72);backdrop-filter: blur(10px);">'+
+      '<div style="font-weight:850;">'+escapeHtml(r.id)+'</div>'+
+      '<div style="color:rgba(0,0,0,.60);font-size:13px;">'+escapeHtml(r.title)+'</div>'+
+      (r.matrix?'<div style="color:rgba(0,0,0,.42);font-size:12px;margin-top:3px;">'+escapeHtml(r.matrix)+'</div>':'')+
     '</div>'
   ).join('');
-  box.querySelectorAll("[data-id]").forEach(el => el.addEventListener("click", () => pickStep(el.getAttribute("data-id"), {fit:true})));
+  box.querySelectorAll("[data-id]").forEach(el=>el.addEventListener("click",()=>pickStep(el.getAttribute("data-id"),{fit:true})));
 }
 
-function highlight(id) {
-  polyById.forEach(p => {
-    p.style.stroke = "rgba(0,0,0,0.25)";
-    p.style.strokeWidth = "1";
-  });
-  const p = polyById.get(id);
-  if (p) {
-    p.style.stroke = "rgba(0,0,0,0.70)";
-    p.style.strokeWidth = "2";
-  }
-}
-
-function fitToSelection(id) {
-  const p = polyById.get(id);
-  const viewport = document.getElementById("viewport");
-  const img = document.getElementById("diagram");
-  const zoomRange = document.getElementById("zoomRange");
-
-  if (!p || !viewport || !img) return;
-
-  // bbox in current SVG coordinates (same as img display)
-  const bbox = p.getBBox();
-  const pad = 40;
-  const targetW = viewport.clientWidth - pad;
-  const targetH = viewport.clientHeight - pad;
-
-  // if zoom control exists — adjust zoom to fit bbox
-  if (zoomRange && img.naturalWidth) {
-    const currentZoom = img.clientWidth / img.naturalWidth; // 0..?
-    const needScale = Math.min(targetW / bbox.width, targetH / bbox.height);
-    let newZoom = Math.round((currentZoom * needScale) * 100);
-    newZoom = Math.max(60, Math.min(300, newZoom));
-
-    zoomRange.value = String(newZoom);
-    // trigger input so your existing zoom handler redraws svg
-    zoomRange.dispatchEvent(new Event("input", {bubbles:true}));
-  }
-
-  // center scroll (works even without zoom)
-  viewport.scrollLeft = Math.max(0, bbox.x + bbox.width/2 - viewport.clientWidth/2);
-  viewport.scrollTop  = Math.max(0, bbox.y + bbox.height/2 - viewport.clientHeight/2);
-}
-
-function pickStep(id, opts) {
-  selectedId = id;
-  highlight(id);
-  renderStep(document.getElementById("panel"), id);
-
-  const shouldFit = opts && opts.fit;
-  if (shouldFit) fitToSelection(id);
-}
-
-function ensureSvgOverlay(img, canvas) {
-  let svg = document.getElementById("hotspotSvg");
-  if (!svg) {
-    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("id", "hotspotSvg");
-    svg.style.position = "absolute";
-    svg.style.left = "0";
-    svg.style.top = "0";
-    svg.style.pointerEvents = "auto";
+function ensureSvg(img,canvas){
+  let svg=document.getElementById("hotspotSvg");
+  if(!svg){
+    svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+    svg.setAttribute("id","hotspotSvg");
+    svg.style.position="absolute";
+    svg.style.pointerEvents="auto";
     canvas.appendChild(svg);
+
+    const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
+    defs.innerHTML=`
+      <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.18)"/>
+      </filter>
+      <filter id="focusGlow" x="-60%" y="-60%" width="220%" height="220%">
+        <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="rgba(0,122,255,0.22)"/>
+        <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(0,0,0,0.14)"/>
+      </filter>
+    `;
+    svg.appendChild(defs);
   }
-  svg.setAttribute("width", img.clientWidth);
-  svg.setAttribute("height", img.clientHeight);
-  svg.setAttribute("viewBox", "0 0 " + img.clientWidth + " " + img.clientHeight);
+  svg.style.left=img.offsetLeft+"px";
+  svg.style.top=img.offsetTop+"px";
+  svg.setAttribute("width",img.clientWidth);
+  svg.setAttribute("height",img.clientHeight);
+  svg.setAttribute("viewBox","0 0 "+img.clientWidth+" "+img.clientHeight);
   return svg;
 }
 
-function drawHotspotsSvg(svg, img) {
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
+function drawHotspots(svg,img){
+  [...svg.querySelectorAll("polygon")].forEach(p=>p.remove());
   polyById.clear();
 
-  const sx = img.clientWidth / img.naturalWidth;
-  const sy = img.clientHeight / img.naturalHeight;
+  const sx=img.clientWidth/img.naturalWidth;
+  const sy=img.clientHeight/img.naturalHeight;
 
-  HOTSPOTS.forEach(h => {
-    const id = h.id;
-    if (!id || !Array.isArray(h.points)) return;
-    const pts = normalizePoints(h.points);
-    if (!pts.length) return;
+  HOTSPOTS.forEach(h=>{
+    const id=h.id;
+    if(!id||!Array.isArray(h.points)) return;
+    const pts=normalizePoints(h.points);
+    if(!pts.length) return;
+    const spts=pts.map(p=>[p[0]*sx,p[1]*sy]);
+    const pointsAttr=spts.map(p=>p[0].toFixed(2)+","+p[1].toFixed(2)).join(" ");
 
-    const spts = pts.map(p => [p[0]*sx, p[1]*sy]);
-    const pointsAttr = spts.map(p => p[0].toFixed(2)+","+p[1].toFixed(2)).join(" ");
+    const poly=document.createElementNS("http://www.w3.org/2000/svg","polygon");
+    poly.setAttribute("points",pointsAttr);
+    poly.style.fill="rgba(255,255,255,0.06)";
+    poly.style.stroke="rgba(0,0,0,0.20)";
+    poly.style.strokeWidth="1";
+    poly.style.cursor="pointer";
+    poly.setAttribute("filter","url(#softShadow)");
+    poly.addEventListener("click",()=>pickStep(id,{fit:false}));
 
-    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-    poly.setAttribute("points", pointsAttr);
-    poly.style.fill = (PHASE_STYLE[getPhase(id)] || PHASE_STYLE.UNK).fill;
-    poly.style.stroke = "rgba(0,0,0,0.25)";
-    poly.style.strokeWidth = "1";
-    poly.style.cursor = "pointer";
-
-    poly.addEventListener("click", () => pickStep(id, {fit:true}));
-
-    poly.addEventListener("mouseenter", () => {
-      if (selectedId === id) return;
-      poly.style.stroke = "rgba(0,0,0,0.55)";
-      poly.style.strokeWidth = "2";
-    });
-    poly.addEventListener("mouseleave", () => {
-      if (selectedId === id) return;
-      poly.style.stroke = "rgba(0,0,0,0.25)";
-      poly.style.strokeWidth = "1";
-    });
+    poly.addEventListener("mouseenter",()=>{if(selectedId===id)return;poly.style.stroke="rgba(0,0,0,0.32)";poly.style.strokeWidth="1.6";});
+    poly.addEventListener("mouseleave",()=>{if(selectedId===id)return;poly.style.stroke="rgba(0,0,0,0.20)";poly.style.strokeWidth="1";});
 
     svg.appendChild(poly);
-    polyById.set(id, poly);
+    polyById.set(id,poly);
   });
-
-  if (selectedId && polyById.has(selectedId)) highlight(selectedId);
+  highlightSelected();
 }
 
-window.onload = function() {
-  try {
-    const canvas = document.getElementById("canvas");
-    const img = document.getElementById("diagram");
-    const panel = document.getElementById("panel");
-    initPanel(panel);
-
-    const input = panel.querySelector("#stepSearch");
-    const clearBtn = panel.querySelector("#clearSearch");
-
-    function refresh() {
-      const r = searchSteps(input.value);
-      renderSearch(panel, r, input.value);
-    }
-
-    input.addEventListener("input", refresh);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        const r = searchSteps(input.value);
-        if (r.length) pickStep(r[0].id, {fit:true});
-      }
-    });
-
-    clearBtn.addEventListener("click", () => {
-      input.value = "";
-      panel.querySelector("#searchResults").innerHTML = "";
-      input.focus();
-    });
-
-    function redraw() {
-      const svg = ensureSvgOverlay(img, canvas);
-      drawHotspotsSvg(svg, img);
-    }
-
-    if (!img.complete) img.onload = redraw;
-    else redraw();
-
-    window.addEventListener("resize", redraw);
-  } catch (e) {
-    alert("Ошибка в app.js: " + e);
-    console.error(e);
+function highlightSelected(){
+  polyById.forEach((p,pid)=>{
+    p.style.stroke="rgba(0,0,0,0.20)";
+    p.style.strokeWidth="1";
+    p.style.fill="rgba(255,255,255,0.06)";
+    p.setAttribute("filter","url(#softShadow)");
+  });
+  const p=polyById.get(selectedId);
+  if(p){
+    p.style.stroke="rgba(0,122,255,0.90)";
+    p.style.strokeWidth="2";
+    p.style.fill="rgba(255,255,255,0.10)";
+    p.setAttribute("filter","url(#focusGlow)");
   }
+}
+
+function computeBBoxForIds(ids){
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  ids.forEach(id=>{
+    const p=polyById.get(id);
+    if(!p) return;
+    const b=p.getBBox();
+    x0=Math.min(x0,b.x); y0=Math.min(y0,b.y);
+    x1=Math.max(x1,b.x+b.width); y1=Math.max(y1,b.y+b.height);
+  });
+  if(!isFinite(x0)) return null;
+  return {x:x0,y:y0,w:(x1-x0),h:(y1-y0)};
+}
+
+function focusGroup(prefix){
+  const viewport=document.getElementById("viewport");
+  const img=document.getElementById("diagram");
+  if(!viewport||!img) return;
+
+  const ids=[...polyById.keys()].filter(id=>id.startsWith(prefix));
+  const bbox=computeBBoxForIds(ids);
+  if(!bbox) return;
+
+  const pad=90;
+  const targetW=viewport.clientWidth-pad;
+  const targetH=viewport.clientHeight-pad;
+
+  const currentZoom=img.clientWidth/img.naturalWidth;
+  const needScale=Math.min(targetW/bbox.w,targetH/bbox.h);
+  let newZoom=Math.round((currentZoom*needScale)*100);
+  newZoom=Math.max(60,Math.min(220,newZoom));
+  setZoom(newZoom,true);
+
+  setTimeout(()=>{
+    const ids2=[...polyById.keys()].filter(id=>id.startsWith(prefix));
+    const b2=computeBBoxForIds(ids2)||bbox;
+    viewport.scrollLeft=Math.max(0,b2.x+b2.w/2-viewport.clientWidth/2);
+    viewport.scrollTop=Math.max(0,b2.y+b2.h/2-viewport.clientHeight/2);
+  }, 30);
+
+  if (isMobile() && showPane) showPane("diagram");
+}
+
+function initPan(){
+  const viewport=document.getElementById("viewport");
+  if(!viewport) return;
+  let isDrag=false,startX=0,startY=0,startSL=0,startST=0;
+  viewport.addEventListener("mousedown",(e)=>{isDrag=true;viewport.classList.add("dragging");startX=e.clientX;startY=e.clientY;startSL=viewport.scrollLeft;startST=viewport.scrollTop;});
+  window.addEventListener("mousemove",(e)=>{if(!isDrag)return;viewport.scrollLeft=startSL-(e.clientX-startX);viewport.scrollTop=startST-(e.clientY-startY);});
+  window.addEventListener("mouseup",()=>{isDrag=false;viewport.classList.remove("dragging");});
+}
+
+function setZoom(percent,redraw=true){
+  const img=document.getElementById("diagram");
+  const zoomLabel=document.getElementById("zoomLabel");
+  const zoomRange=document.getElementById("zoomRange");
+  if(!img||!img.naturalWidth) return;
+  percent=Math.max(60,Math.min(220,parseInt(percent,10)||120));
+  if(zoomRange) zoomRange.value=String(percent);
+  if(zoomLabel) zoomLabel.textContent=percent+"%";
+  img.style.width=Math.round(img.naturalWidth*(percent/100))+"px";
+  if(redraw) renderAll();
+}
+
+function pickStep(id, opts){
+  selectedId=id;
+  highlightSelected();
+  renderStep(document.getElementById("panel"), id);
+
+  if (isMobile() && showPane) showPane("details");
+}
+
+function renderAll(){
+  const canvas=document.getElementById("canvas");
+  const img=document.getElementById("diagram");
+  if(!canvas||!img) return;
+  const svg=ensureSvg(img,canvas);
+  drawHotspots(svg,img);
+}
+
+window.onload=function(){
+  const img=document.getElementById("diagram");
+  const panel=document.getElementById("panel");
+  initPanel(panel);
+
+  initMobileTabs();
+
+  const input=panel.querySelector("#stepSearch");
+  const clearBtn=panel.querySelector("#clearSearch");
+  function refresh(){const r=searchSteps(input.value);renderSearch(panel,r,input.value);}
+  input.addEventListener("input",refresh);
+  input.addEventListener("keydown",(e)=>{if(e.key==="Enter"){const r=searchSteps(input.value);if(r.length) pickStep(r[0].id,{fit:false});}});
+  clearBtn.addEventListener("click",()=>{input.value="";panel.querySelector("#searchResults").innerHTML="";input.focus();});
+
+  const zoomRange=document.getElementById("zoomRange");
+  const zoomOut=document.getElementById("zoomOut");
+  const zoomIn=document.getElementById("zoomIn");
+  const zoomFit=document.getElementById("zoomFit");
+  if(zoomRange) zoomRange.addEventListener("input",()=>setZoom(zoomRange.value,true));
+  if(zoomOut) zoomOut.addEventListener("click",()=>setZoom((parseInt(zoomRange.value,10)||120)-10,true));
+  if(zoomIn) zoomIn.addEventListener("click",()=>setZoom((parseInt(zoomRange.value,10)||120)+10,true));
+  if(zoomFit) zoomFit.addEventListener("click",()=>{const viewport=document.getElementById("viewport");if(!viewport||!img.naturalWidth)return;const pad=90;const fit=Math.floor(((viewport.clientWidth-pad)/img.naturalWidth)*100);setZoom(fit,true);});
+
+  document.querySelectorAll(".nav .item[data-group]").forEach(el=>{
+    el.addEventListener("click",()=>{const g=el.getAttribute("data-group");focusGroup(g);});
+  });
+
+  initPan();
+
+  if(!img.complete) img.onload=()=>{setZoom(120,false);renderAll();};
+  else {setZoom(120,false);renderAll();}
+  window.addEventListener("resize",()=>renderAll());
+
+  if (isMobile() && showPane) showPane("diagram");
 };
